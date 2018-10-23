@@ -2,29 +2,26 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
-import { ResolvedKeybinding, Keybinding, SimpleKeybinding } from 'vs/base/common/keyCodes';
-import Event from 'vs/base/common/event';
-import { IKeybindingService, IKeybindingEvent, IKeyboardEvent } from 'vs/platform/keybinding/common/keybinding';
-import { IContextKey, IContextKeyService, IContextKeyServiceTarget, ContextKeyExpr } from 'vs/platform/contextkey/common/contextkey';
-import { IResolveResult } from 'vs/platform/keybinding/common/keybindingResolver';
-import { USLayoutResolvedKeybinding } from 'vs/platform/keybinding/common/usLayoutResolvedKeybinding';
+import { Event } from 'vs/base/common/event';
+import { Keybinding, ResolvedKeybinding, SimpleKeybinding } from 'vs/base/common/keyCodes';
 import { OS } from 'vs/base/common/platform';
+import { ContextKeyExpr, IContextKey, IContextKeyChangeEvent, IContextKeyService, IContextKeyServiceTarget } from 'vs/platform/contextkey/common/contextkey';
+import { IKeybindingEvent, IKeybindingService, IKeyboardEvent } from 'vs/platform/keybinding/common/keybinding';
+import { IResolveResult } from 'vs/platform/keybinding/common/keybindingResolver';
 import { ResolvedKeybindingItem } from 'vs/platform/keybinding/common/resolvedKeybindingItem';
+import { USLayoutResolvedKeybinding } from 'vs/platform/keybinding/common/usLayoutResolvedKeybinding';
 
 class MockKeybindingContextKey<T> implements IContextKey<T> {
-	private _key: string;
-	private _defaultValue: T;
-	private _value: T;
+	private _defaultValue: T | undefined;
+	private _value: T | undefined;
 
-	constructor(key: string, defaultValue: T) {
-		this._key = key;
+	constructor(defaultValue: T | undefined) {
 		this._defaultValue = defaultValue;
 		this._value = this._defaultValue;
 	}
 
-	public set(value: T): void {
+	public set(value: T | undefined): void {
 		this._value = value;
 	}
 
@@ -32,7 +29,7 @@ class MockKeybindingContextKey<T> implements IContextKey<T> {
 		this._value = this._defaultValue;
 	}
 
-	public get(): T {
+	public get(): T | undefined {
 		return this._value;
 	}
 }
@@ -45,15 +42,15 @@ export class MockContextKeyService implements IContextKeyService {
 	public dispose(): void {
 		//
 	}
-	public createKey<T>(key: string, defaultValue: T): IContextKey<T> {
-		let ret = new MockKeybindingContextKey(key, defaultValue);
+	public createKey<T>(key: string, defaultValue: T | undefined): IContextKey<T> {
+		let ret = new MockKeybindingContextKey(defaultValue);
 		this._keys.set(key, ret);
 		return ret;
 	}
 	public contextMatchesRules(rules: ContextKeyExpr): boolean {
 		return false;
 	}
-	public get onDidChangeContext(): Event<string[]> {
+	public get onDidChangeContext(): Event<IContextKeyChangeEvent> {
 		return Event.None;
 	}
 	public getContextKeyValue(key: string) {
@@ -77,7 +74,7 @@ export class MockKeybindingService implements IKeybindingService {
 	}
 
 	public getDefaultKeybindingsContent(): string {
-		return null;
+		return '';
 	}
 
 	public getDefaultKeybindings(): ResolvedKeybindingItem[] {
@@ -111,7 +108,7 @@ export class MockKeybindingService implements IKeybindingService {
 		return [];
 	}
 
-	public lookupKeybinding(commandId: string): ResolvedKeybinding {
+	public lookupKeybinding(commandId: string): ResolvedKeybinding | null {
 		return null;
 	}
 
@@ -119,7 +116,15 @@ export class MockKeybindingService implements IKeybindingService {
 		return 0;
 	}
 
-	public softDispatch(keybinding: IKeyboardEvent, target: IContextKeyServiceTarget): IResolveResult {
+	public softDispatch(keybinding: IKeyboardEvent, target: IContextKeyServiceTarget): IResolveResult | null {
 		return null;
+	}
+
+	dispatchEvent(e: IKeyboardEvent, target: IContextKeyServiceTarget): boolean {
+		return false;
+	}
+
+	mightProducePrintableCharacter(e: IKeyboardEvent): boolean {
+		return false;
 	}
 }

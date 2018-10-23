@@ -2,15 +2,13 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
-import { AbstractScrollbar, ScrollbarHost, ISimplifiedMouseEvent } from 'vs/base/browser/ui/scrollbar/abstractScrollbar';
 import { StandardMouseWheelEvent } from 'vs/base/browser/mouseEvent';
-import { IDomNodePagePosition } from 'vs/base/browser/dom';
+import { AbstractScrollbar, ISimplifiedMouseEvent, ScrollbarHost } from 'vs/base/browser/ui/scrollbar/abstractScrollbar';
 import { ScrollableElementResolvedOptions } from 'vs/base/browser/ui/scrollbar/scrollableElementOptions';
-import { Scrollable, ScrollEvent, ScrollbarVisibility } from 'vs/base/common/scrollable';
-import { ScrollbarState } from 'vs/base/browser/ui/scrollbar/scrollbarState';
 import { ARROW_IMG_SIZE } from 'vs/base/browser/ui/scrollbar/scrollbarArrow';
+import { ScrollbarState } from 'vs/base/browser/ui/scrollbar/scrollbarState';
+import { INewScrollPosition, ScrollEvent, Scrollable, ScrollbarVisibility } from 'vs/base/common/scrollable';
 
 export class HorizontalScrollbar extends AbstractScrollbar {
 
@@ -55,7 +53,7 @@ export class HorizontalScrollbar extends AbstractScrollbar {
 			});
 		}
 
-		this._createSlider(Math.floor((options.horizontalScrollbarSize - options.horizontalSliderSize) / 2), 0, null, options.horizontalSliderSize);
+		this._createSlider(Math.floor((options.horizontalScrollbarSize - options.horizontalSliderSize) / 2), 0, undefined, options.horizontalSliderSize);
 	}
 
 	protected _updateSlider(sliderSize: number, sliderPosition: number): void {
@@ -77,8 +75,8 @@ export class HorizontalScrollbar extends AbstractScrollbar {
 		return this._shouldRender;
 	}
 
-	protected _mouseDownRelativePosition(e: ISimplifiedMouseEvent, domNodePosition: IDomNodePagePosition): number {
-		return e.posx - domNodePosition.left;
+	protected _mouseDownRelativePosition(offsetX: number, offsetY: number): number {
+		return offsetX;
 	}
 
 	protected _sliderMousePosition(e: ISimplifiedMouseEvent): number {
@@ -89,18 +87,7 @@ export class HorizontalScrollbar extends AbstractScrollbar {
 		return e.posy;
 	}
 
-	protected _getScrollPosition(): number {
-		const scrollState = this._scrollable.getState();
-		return scrollState.scrollLeft;
-	}
-
-	protected _setScrollPosition(scrollPosition: number) {
-		this._scrollable.updateState({
-			scrollLeft: scrollPosition
-		});
-	}
-
-	public validateScrollPosition(desiredScrollPosition: number): number {
-		return this._scrollable.validateScrollLeft(desiredScrollPosition);
+	public writeScrollPosition(target: INewScrollPosition, scrollPosition: number): void {
+		target.scrollLeft = scrollPosition;
 	}
 }

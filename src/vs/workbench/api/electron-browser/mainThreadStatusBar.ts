@@ -2,21 +2,22 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
 import { IStatusbarService, StatusbarAlignment as MainThreadStatusBarAlignment } from 'vs/platform/statusbar/common/statusbar';
 import { IDisposable } from 'vs/base/common/lifecycle';
-import { MainThreadStatusBarShape } from '../node/extHost.protocol';
+import { MainThreadStatusBarShape, MainContext, IExtHostContext } from '../node/extHost.protocol';
 import { ThemeColor } from 'vs/platform/theme/common/themeService';
+import { extHostNamedCustomer } from 'vs/workbench/api/electron-browser/extHostCustomers';
 
-export class MainThreadStatusBar extends MainThreadStatusBarShape {
+@extHostNamedCustomer(MainContext.MainThreadStatusBar)
+export class MainThreadStatusBar implements MainThreadStatusBarShape {
 
 	private readonly _entries: { [id: number]: IDisposable };
 
 	constructor(
+		extHostContext: IExtHostContext,
 		@IStatusbarService private readonly _statusbarService: IStatusbarService
 	) {
-		super();
 		this._entries = Object.create(null);
 	}
 

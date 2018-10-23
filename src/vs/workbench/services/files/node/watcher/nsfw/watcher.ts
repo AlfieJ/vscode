@@ -3,21 +3,26 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import { TPromise } from 'vs/base/common/winjs.base';
+import { Event } from 'vs/base/common/event';
+import { IRawFileChange } from 'vs/workbench/services/files/node/watcher/common';
 
 export interface IWatcherRequest {
 	basePath: string;
 	ignored: string[];
 }
 
-export interface IWatcherService {
-	initialize(verboseLogging: boolean): TPromise<void>;
-	setRoots(roots: IWatcherRequest[]): TPromise<void>;
+export interface IWatcherOptions {
+	verboseLogging: boolean;
 }
 
-export interface IFileWatcher {
-	startWatching(): () => void;
-	addFolder(folder: string): void;
+export interface IWatchError {
+	message: string;
+}
+
+export interface IWatcherService {
+	watch(options: IWatcherOptions): Event<IRawFileChange[] | IWatchError>;
+	setRoots(roots: IWatcherRequest[]): TPromise<void>;
+	setVerboseLogging(enabled: boolean): TPromise<void>;
+	stop(): TPromise<void>;
 }

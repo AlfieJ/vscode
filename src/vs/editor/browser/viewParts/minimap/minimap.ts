@@ -3,37 +3,29 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import 'vs/css!./minimap';
-import { ViewPart, PartFingerprint, PartFingerprints } from 'vs/editor/browser/view/viewPart';
-import { ViewContext } from 'vs/editor/common/view/viewContext';
+import * as dom from 'vs/base/browser/dom';
+import { FastDomNode, createFastDomNode } from 'vs/base/browser/fastDomNode';
+import { GlobalMouseMoveMonitor, IStandardMouseMoveEventData, standardMouseMoveMerger } from 'vs/base/browser/globalMouseMoveMonitor';
+import { CharCode } from 'vs/base/common/charCode';
+import { IDisposable } from 'vs/base/common/lifecycle';
+import * as platform from 'vs/base/common/platform';
+import * as strings from 'vs/base/common/strings';
+import { ILine, RenderedLinesCollection } from 'vs/editor/browser/view/viewLayer';
+import { PartFingerprint, PartFingerprints, ViewPart } from 'vs/editor/browser/view/viewPart';
+import { RenderMinimap } from 'vs/editor/common/config/editorOptions';
+import { Range } from 'vs/editor/common/core/range';
+import { RGBA8 } from 'vs/editor/common/core/rgba';
+import { IConfiguration, ScrollType } from 'vs/editor/common/editorCommon';
+import { ColorId } from 'vs/editor/common/modes';
+import { Constants, MinimapCharRenderer, MinimapTokensColorTracker } from 'vs/editor/common/view/minimapCharRenderer';
 import { RenderingContext, RestrictedRenderingContext } from 'vs/editor/common/view/renderingContext';
 import { getOrCreateMinimapCharRenderer } from 'vs/editor/common/view/runtimeMinimapCharRenderer';
-import * as dom from 'vs/base/browser/dom';
-import { MinimapCharRenderer, MinimapTokensColorTracker, Constants } from 'vs/editor/common/view/minimapCharRenderer';
-import * as editorCommon from 'vs/editor/common/editorCommon';
-import { CharCode } from 'vs/base/common/charCode';
-import { ViewLineData } from 'vs/editor/common/viewModel/viewModel';
-import { ColorId } from 'vs/editor/common/modes';
-import { FastDomNode, createFastDomNode } from 'vs/base/browser/fastDomNode';
-import { IDisposable } from 'vs/base/common/lifecycle';
-import { RenderedLinesCollection, ILine } from 'vs/editor/browser/view/viewLayer';
-import { Range } from 'vs/editor/common/core/range';
-import { RGBA } from 'vs/base/common/color';
+import { ViewContext } from 'vs/editor/common/view/viewContext';
 import * as viewEvents from 'vs/editor/common/view/viewEvents';
-import { GlobalMouseMoveMonitor, IStandardMouseMoveEventData, standardMouseMoveMerger } from 'vs/base/browser/globalMouseMoveMonitor';
-import * as platform from 'vs/base/common/platform';
+import { ViewLineData } from 'vs/editor/common/viewModel/viewModel';
+import { scrollbarShadow, scrollbarSliderActiveBackground, scrollbarSliderBackground, scrollbarSliderHoverBackground } from 'vs/platform/theme/common/colorRegistry';
 import { registerThemingParticipant } from 'vs/platform/theme/common/themeService';
-import { scrollbarSliderBackground, scrollbarSliderHoverBackground, scrollbarSliderActiveBackground, scrollbarShadow } from 'vs/platform/theme/common/colorRegistry';
-
-const enum RenderMinimap {
-	None = 0,
-	Small = 1,
-	Large = 2,
-	SmallBlocks = 3,
-	LargeBlocks = 4,
-}
 
 function getMinimapLineHeight(renderMinimap: RenderMinimap): number {
 	if (renderMinimap === RenderMinimap.Large) {
@@ -83,6 +75,10 @@ class MinimapOptions {
 	public readonly lineHeight: number;
 
 	/**
+	 * container dom node left position (in CSS px)
+	 */
+	public readonly minimapLeft: number;
+	/**
 	 * container dom node width (in CSS px)
 	 */
 	public readonly minimapWidth: number;
@@ -109,7 +105,7 @@ class MinimapOptions {
 	 */
 	public readonly canvasOuterHeight: number;
 
-	constructor(configuration: editorCommon.IConfiguration) {
+	constructor(configuration: IConfiguration) {
 		const pixelRatio = configuration.editor.pixelRatio;
 		const layoutInfo = configuration.editor.layoutInfo;
 		const viewInfo = configuration.editor.viewInfo;
@@ -121,6 +117,7 @@ class MinimapOptions {
 		this.pixelRatio = pixelRatio;
 		this.typicalHalfwidthCharacterWidth = fontInfo.typicalHalfwidthCharacterWidth;
 		this.lineHeight = configuration.editor.lineHeight;
+		this.minimapLeft = layoutInfo.minimapLeft;
 		this.minimapWidth = layoutInfo.minimapWidth;
 		this.minimapHeight = layoutInfo.height;
 
@@ -138,6 +135,7 @@ class MinimapOptions {
 			&& this.pixelRatio === other.pixelRatio
 			&& this.typicalHalfwidthCharacterWidth === other.typicalHalfwidthCharacterWidth
 			&& this.lineHeight === other.lineHeight
+			&& this.minimapLeft === other.minimapLeft
 			&& this.minimapWidth === other.minimapWidth
 			&& this.minimapHeight === other.minimapHeight
 			&& this.canvasInnerWidth === other.canvasInnerWidth
@@ -215,7 +213,7 @@ class MinimapLayout {
 		lineCount: number,
 		scrollTop: number,
 		scrollHeight: number,
-		previousLayout: MinimapLayout
+		previousLayout: MinimapLayout | null
 	): MinimapLayout {
 		const pixelRatio = options.pixelRatio;
 		const minimapLineHeight = getMinimapLineHeight(options.renderMinimap);
@@ -290,7 +288,7 @@ class MinimapLayout {
 
 class MinimapLine implements ILine {
 
-	public static INVALID = new MinimapLine(-1);
+	public static readonly INVALID = new MinimapLine(-1);
 
 	dy: number;
 
@@ -386,7 +384,7 @@ class MinimapBuffers {
 	private readonly _buffers: [ImageData, ImageData];
 	private _lastUsedBuffer: number;
 
-	constructor(ctx: CanvasRenderingContext2D, WIDTH: number, HEIGHT: number, background: RGBA) {
+	constructor(ctx: CanvasRenderingContext2D, WIDTH: number, HEIGHT: number, background: RGBA8) {
 		this._backgroundFillData = MinimapBuffers._createBackgroundFillData(WIDTH, HEIGHT, background);
 		this._buffers = [
 			ctx.createImageData(WIDTH, HEIGHT),
@@ -406,7 +404,7 @@ class MinimapBuffers {
 		return result;
 	}
 
-	private static _createBackgroundFillData(WIDTH: number, HEIGHT: number, background: RGBA): Uint8ClampedArray {
+	private static _createBackgroundFillData(WIDTH: number, HEIGHT: number, background: RGBA8): Uint8ClampedArray {
 		const backgroundR = background.r;
 		const backgroundG = background.g;
 		const backgroundB = background.b;
@@ -439,11 +437,9 @@ export class Minimap extends ViewPart {
 	private readonly _sliderMouseMoveMonitor: GlobalMouseMoveMonitor<IStandardMouseMoveEventData>;
 	private readonly _sliderMouseDownListener: IDisposable;
 
-	private readonly _minimapCharRenderer: MinimapCharRenderer;
-
 	private _options: MinimapOptions;
-	private _lastRenderData: RenderData;
-	private _buffers: MinimapBuffers;
+	private _lastRenderData: RenderData | null;
+	private _buffers: MinimapBuffers | null;
 
 	constructor(context: ViewContext) {
 		super(context);
@@ -458,7 +454,6 @@ export class Minimap extends ViewPart {
 		this._domNode.setPosition('absolute');
 		this._domNode.setAttribute('role', 'presentation');
 		this._domNode.setAttribute('aria-hidden', 'true');
-		this._domNode.setRight(this._context.configuration.editor.layoutInfo.verticalScrollbarWidth);
 
 		this._shadow = createFastDomNode(document.createElement('div'));
 		this._shadow.setClassName('minimap-shadow-hidden');
@@ -482,8 +477,6 @@ export class Minimap extends ViewPart {
 
 		this._tokensColorTracker = MinimapTokensColorTracker.getInstance();
 
-		this._minimapCharRenderer = getOrCreateMinimapCharRenderer();
-
 		this._applyLayout();
 
 		this._mouseDownListener = dom.addStandardDisposableListener(this._canvas.domNode, 'mousedown', (e) => {
@@ -506,7 +499,8 @@ export class Minimap extends ViewPart {
 			this._context.privateViewEventBus.emit(new viewEvents.ViewRevealRangeRequestEvent(
 				new Range(lineNumber, 1, lineNumber, 1),
 				viewEvents.VerticalRevealType.Center,
-				false
+				false,
+				ScrollType.Smooth
 			));
 		});
 
@@ -528,14 +522,14 @@ export class Minimap extends ViewPart {
 
 						if (platform.isWindows && mouseOrthogonalDelta > MOUSE_DRAG_RESET_DISTANCE) {
 							// The mouse has wondered away from the scrollbar => reset dragging
-							this._context.viewLayout.setScrollPosition({
+							this._context.viewLayout.setScrollPositionNow({
 								scrollTop: initialSliderState.scrollTop
 							});
 							return;
 						}
 
 						const mouseDelta = mouseMoveData.posy - initialMousePosition;
-						this._context.viewLayout.setScrollPosition({
+						this._context.viewLayout.setScrollPositionNow({
 							scrollTop: initialSliderState.getDesiredScrollTopFromDelta(mouseDelta)
 						});
 					},
@@ -566,6 +560,7 @@ export class Minimap extends ViewPart {
 	}
 
 	private _applyLayout(): void {
+		this._domNode.setLeft(this._options.minimapLeft);
 		this._domNode.setWidth(this._options.minimapWidth);
 		this._domNode.setHeight(this._options.minimapHeight);
 		this._shadow.setHeight(this._options.minimapHeight);
@@ -579,13 +574,13 @@ export class Minimap extends ViewPart {
 	private _getBuffer(): ImageData {
 		if (!this._buffers) {
 			this._buffers = new MinimapBuffers(
-				this._canvas.domNode.getContext('2d'),
+				this._canvas.domNode.getContext('2d')!,
 				this._options.canvasInnerWidth,
 				this._options.canvasInnerHeight,
 				this._tokensColorTracker.getColor(ColorId.DefaultBackground)
 			);
 		}
-		return this._buffers.getBuffer();
+		return this._buffers!.getBuffer();
 	}
 
 	private _onOptionsMaybeChanged(): boolean {
@@ -657,6 +652,8 @@ export class Minimap extends ViewPart {
 		const renderMinimap = this._options.renderMinimap;
 		if (renderMinimap === RenderMinimap.None) {
 			this._shadow.setClassName('minimap-shadow-hidden');
+			this._sliderHorizontal.setWidth(0);
+			this._sliderHorizontal.setHeight(0);
 			return;
 		}
 		if (renderingCtx.scrollLeft + renderingCtx.viewportWidth >= renderingCtx.scrollWidth) {
@@ -708,7 +705,7 @@ export class Minimap extends ViewPart {
 		const imageData = this._getBuffer();
 
 		// Render untouched lines by using last rendered data.
-		let needed = Minimap._renderUntouchedLines(
+		let [_dirtyY1, _dirtyY2, needed] = Minimap._renderUntouchedLines(
 			imageData,
 			startLineNumber,
 			endLineNumber,
@@ -733,19 +730,23 @@ export class Minimap extends ViewPart {
 					useLighterFont,
 					renderMinimap,
 					this._tokensColorTracker,
-					this._minimapCharRenderer,
+					getOrCreateMinimapCharRenderer(),
 					dy,
 					tabSize,
-					lineInfo.data[lineIndex]
+					lineInfo.data[lineIndex]!
 				);
 			}
 			renderedLines[lineIndex] = new MinimapLine(dy);
 			dy += minimapLineHeight;
 		}
 
+		const dirtyY1 = (_dirtyY1 === -1 ? 0 : _dirtyY1);
+		const dirtyY2 = (_dirtyY2 === -1 ? imageData.height : _dirtyY2);
+		const dirtyHeight = dirtyY2 - dirtyY1;
+
 		// Finally, paint to the canvas
-		const ctx = this._canvas.domNode.getContext('2d');
-		ctx.putImageData(imageData, 0, 0);
+		const ctx = this._canvas.domNode.getContext('2d')!;
+		ctx.putImageData(imageData, 0, 0, 0, dirtyY1, imageData.width, dirtyHeight);
 
 		// Save rendered data for reuse on next frame if possible
 		return new RenderData(
@@ -760,15 +761,15 @@ export class Minimap extends ViewPart {
 		startLineNumber: number,
 		endLineNumber: number,
 		minimapLineHeight: number,
-		lastRenderData: RenderData,
-	): boolean[] {
+		lastRenderData: RenderData | null,
+	): [number, number, boolean[]] {
 
 		let needed: boolean[] = [];
 		if (!lastRenderData) {
 			for (let i = 0, len = endLineNumber - startLineNumber + 1; i < len; i++) {
 				needed[i] = true;
 			}
-			return needed;
+			return [-1, -1, needed];
 		}
 
 		const _lastData = lastRenderData._get();
@@ -778,6 +779,10 @@ export class Minimap extends ViewPart {
 		const lastLinesLength = lastLines.length;
 		const WIDTH = target.width;
 		const targetData = target.data;
+
+		const maxDestPixel = (endLineNumber - startLineNumber + 1) * minimapLineHeight * WIDTH * 4;
+		let dirtyPixel1 = -1; // the pixel offset up to which all the data is equal to the prev frame
+		let dirtyPixel2 = -1; // the pixel offset after which all the data is equal to the prev frame
 
 		let copySourceStart = -1;
 		let copySourceEnd = -1;
@@ -809,6 +814,12 @@ export class Minimap extends ViewPart {
 				if (copySourceStart !== -1) {
 					// flush existing copy request
 					targetData.set(lastTargetData.subarray(copySourceStart, copySourceEnd), copyDestStart);
+					if (dirtyPixel1 === -1 && copySourceStart === 0 && copySourceStart === copyDestStart) {
+						dirtyPixel1 = copySourceEnd;
+					}
+					if (dirtyPixel2 === -1 && copySourceEnd === maxDestPixel && copySourceStart === copyDestStart) {
+						dirtyPixel2 = copySourceStart;
+					}
 				}
 				copySourceStart = sourceStart;
 				copySourceEnd = sourceEnd;
@@ -823,14 +834,23 @@ export class Minimap extends ViewPart {
 		if (copySourceStart !== -1) {
 			// flush existing copy request
 			targetData.set(lastTargetData.subarray(copySourceStart, copySourceEnd), copyDestStart);
+			if (dirtyPixel1 === -1 && copySourceStart === 0 && copySourceStart === copyDestStart) {
+				dirtyPixel1 = copySourceEnd;
+			}
+			if (dirtyPixel2 === -1 && copySourceEnd === maxDestPixel && copySourceStart === copyDestStart) {
+				dirtyPixel2 = copySourceStart;
+			}
 		}
 
-		return needed;
+		const dirtyY1 = (dirtyPixel1 === -1 ? -1 : dirtyPixel1 / (WIDTH * 4));
+		const dirtyY2 = (dirtyPixel2 === -1 ? -1 : dirtyPixel2 / (WIDTH * 4));
+
+		return [dirtyY1, dirtyY2, needed];
 	}
 
 	private static _renderLine(
 		target: ImageData,
-		backgroundColor: RGBA,
+		backgroundColor: RGBA8,
 		useLighterFont: boolean,
 		renderMinimap: RenderMinimap,
 		colorTracker: MinimapTokensColorTracker,
@@ -848,10 +868,9 @@ export class Minimap extends ViewPart {
 		let charIndex = 0;
 		let tabsCharDelta = 0;
 
-		for (let tokenIndex = 0, tokensLen = tokens.length; tokenIndex < tokensLen; tokenIndex++) {
-			const token = tokens[tokenIndex];
-			const tokenEndIndex = token.endIndex;
-			const tokenColorId = token.getForeground();
+		for (let tokenIndex = 0, tokensLen = tokens.getCount(); tokenIndex < tokensLen; tokenIndex++) {
+			const tokenEndIndex = tokens.getEndOffset(tokenIndex);
+			const tokenColorId = tokens.getForeground(tokenIndex);
 			const tokenColor = colorTracker.getColor(tokenColorId);
 
 			for (; charIndex < tokenEndIndex; charIndex++) {
@@ -870,17 +889,27 @@ export class Minimap extends ViewPart {
 					// No need to render anything since space is invisible
 					dx += charWidth;
 				} else {
-					if (renderMinimap === RenderMinimap.Large) {
-						minimapCharRenderer.x2RenderChar(target, dx, dy, charCode, tokenColor, backgroundColor, useLighterFont);
-					} else if (renderMinimap === RenderMinimap.Small) {
-						minimapCharRenderer.x1RenderChar(target, dx, dy, charCode, tokenColor, backgroundColor, useLighterFont);
-					} else if (renderMinimap === RenderMinimap.LargeBlocks) {
-						minimapCharRenderer.x2BlockRenderChar(target, dx, dy, tokenColor, backgroundColor, useLighterFont);
-					} else {
-						// RenderMinimap.SmallBlocks
-						minimapCharRenderer.x1BlockRenderChar(target, dx, dy, tokenColor, backgroundColor, useLighterFont);
+					// Render twice for a full width character
+					let count = strings.isFullWidthCharacter(charCode) ? 2 : 1;
+
+					for (let i = 0; i < count; i++) {
+						if (renderMinimap === RenderMinimap.Large) {
+							minimapCharRenderer.x2RenderChar(target, dx, dy, charCode, tokenColor, backgroundColor, useLighterFont);
+						} else if (renderMinimap === RenderMinimap.Small) {
+							minimapCharRenderer.x1RenderChar(target, dx, dy, charCode, tokenColor, backgroundColor, useLighterFont);
+						} else if (renderMinimap === RenderMinimap.LargeBlocks) {
+							minimapCharRenderer.x2BlockRenderChar(target, dx, dy, tokenColor, backgroundColor, useLighterFont);
+						} else {
+							// RenderMinimap.SmallBlocks
+							minimapCharRenderer.x1BlockRenderChar(target, dx, dy, tokenColor, backgroundColor, useLighterFont);
+						}
+						dx += charWidth;
+
+						if (dx > maxDx) {
+							// hit edge of minimap
+							return;
+						}
 					}
-					dx += charWidth;
 				}
 			}
 		}

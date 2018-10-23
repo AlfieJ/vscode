@@ -2,9 +2,8 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
-import { IExtensionDescription } from 'vs/platform/extensions/common/extensions';
+import { IExtensionDescription } from 'vs/workbench/services/extensions/common/extensions';
 
 const hasOwnProperty = Object.hasOwnProperty;
 
@@ -33,11 +32,21 @@ export class ExtensionDescriptionRegistry {
 			if (Array.isArray(extensionDescription.activationEvents)) {
 				for (let j = 0, lenJ = extensionDescription.activationEvents.length; j < lenJ; j++) {
 					let activationEvent = extensionDescription.activationEvents[j];
+
+					// TODO@joao: there's no easy way to contribute this
+					if (activationEvent === 'onUri') {
+						activationEvent = `onUri:${extensionDescription.id}`;
+					}
+
 					this._activationMap[activationEvent] = this._activationMap[activationEvent] || [];
 					this._activationMap[activationEvent].push(extensionDescription);
 				}
 			}
 		}
+	}
+
+	public containsActivationEvent(activationEvent: string): boolean {
+		return hasOwnProperty.call(this._activationMap, activationEvent);
 	}
 
 	public getExtensionDescriptionsForActivationEvent(activationEvent: string): IExtensionDescription[] {
@@ -51,7 +60,7 @@ export class ExtensionDescriptionRegistry {
 		return this._extensionsArr.slice(0);
 	}
 
-	public getExtensionDescription(extensionId: string): IExtensionDescription {
+	public getExtensionDescription(extensionId: string): IExtensionDescription | null {
 		if (!hasOwnProperty.call(this._extensionsMap, extensionId)) {
 			return null;
 		}

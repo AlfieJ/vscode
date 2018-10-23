@@ -2,15 +2,15 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
 import { onUnexpectedError } from 'vs/base/common/errors';
-import Event, { Emitter } from 'vs/base/common/event';
-import { TPromise } from 'vs/base/common/winjs.base';
+import { Emitter, Event } from 'vs/base/common/event';
+import { URI } from 'vs/base/common/uri';
 import { IMode, LanguageId, LanguageIdentifier } from 'vs/editor/common/modes';
 import { FrankensteinMode } from 'vs/editor/common/modes/abstractMode';
+import { NULL_LANGUAGE_IDENTIFIER } from 'vs/editor/common/modes/nullMode';
 import { LanguagesRegistry } from 'vs/editor/common/services/languagesRegistry';
-import { IModeLookupResult, IModeService } from 'vs/editor/common/services/modeService';
+import { IModeService } from 'vs/editor/common/services/modeService';
 
 export class ModeServiceImpl implements IModeService {
 	public _serviceBrand: any;
@@ -21,14 +21,14 @@ export class ModeServiceImpl implements IModeService {
 	private readonly _onDidCreateMode: Emitter<IMode> = new Emitter<IMode>();
 	public readonly onDidCreateMode: Event<IMode> = this._onDidCreateMode.event;
 
-	constructor() {
+	constructor(warnOnOverwrite = false) {
 		this._instantiatedModes = {};
 
-		this._registry = new LanguagesRegistry();
+		this._registry = new LanguagesRegistry(true, warnOnOverwrite);
 	}
 
-	protected _onReady(): TPromise<boolean> {
-		return TPromise.as(true);
+	protected _onReady(): Promise<boolean> {
+		return Promise.resolve(true);
 	}
 
 	public isRegisteredMode(mimetypeOrModeId: string): boolean {
@@ -51,20 +51,20 @@ export class ModeServiceImpl implements IModeService {
 		return this._registry.getFilenames(alias);
 	}
 
-	public getMimeForMode(modeId: string): string {
+	public getMimeForMode(modeId: string): string | null {
 		return this._registry.getMimeForMode(modeId);
 	}
 
-	public getLanguageName(modeId: string): string {
+	public getLanguageName(modeId: string): string | null {
 		return this._registry.getLanguageName(modeId);
 	}
 
-	public getModeIdForLanguageName(alias: string): string {
+	public getModeIdForLanguageName(alias: string): string | null {
 		return this._registry.getModeIdForLanguageNameLowercase(alias);
 	}
 
-	public getModeIdByFilenameOrFirstLine(filename: string, firstLine?: string): string {
-		var modeIds = this._registry.getModeIdsFromFilenameOrFirstLine(filename, firstLine);
+	public getModeIdByFilepathOrFirstLine(filepath: string, firstLine?: string): string | null {
+		const modeIds = this._registry.getModeIdsFromFilepathOrFirstLine(filepath, firstLine);
 
 		if (modeIds.length > 0) {
 			return modeIds[0];
@@ -73,8 +73,8 @@ export class ModeServiceImpl implements IModeService {
 		return null;
 	}
 
-	public getModeId(commaSeparatedMimetypesOrCommaSeparatedIds: string): string {
-		var modeIds = this._registry.extractModeIds(commaSeparatedMimetypesOrCommaSeparatedIds);
+	public getModeId(commaSeparatedMimetypesOrCommaSeparatedIds: string): string | null {
+		const modeIds = this._registry.extractModeIds(commaSeparatedMimetypesOrCommaSeparatedIds);
 
 		if (modeIds.length > 0) {
 			return modeIds[0];
@@ -83,37 +83,21 @@ export class ModeServiceImpl implements IModeService {
 		return null;
 	}
 
-	public getLanguageIdentifier(modeId: string | LanguageId): LanguageIdentifier {
+	public getLanguageIdentifier(modeId: string | LanguageId): LanguageIdentifier | null {
 		return this._registry.getLanguageIdentifier(modeId);
 	}
 
-	public getConfigurationFiles(modeId: string): string[] {
+	public getConfigurationFiles(modeId: string): URI[] {
 		return this._registry.getConfigurationFiles(modeId);
 	}
 
 	// --- instantiation
 
-	public lookup(commaSeparatedMimetypesOrCommaSeparatedIds: string): IModeLookupResult[] {
-		var r: IModeLookupResult[] = [];
-		var modeIds = this._registry.extractModeIds(commaSeparatedMimetypesOrCommaSeparatedIds);
+	public getMode(commaSeparatedMimetypesOrCommaSeparatedIds: string): IMode | null {
+		const modeIds = this._registry.extractModeIds(commaSeparatedMimetypesOrCommaSeparatedIds);
 
-		for (var i = 0; i < modeIds.length; i++) {
-			var modeId = modeIds[i];
-
-			r.push({
-				modeId: modeId,
-				isInstantiated: this._instantiatedModes.hasOwnProperty(modeId)
-			});
-		}
-
-		return r;
-	}
-
-	public getMode(commaSeparatedMimetypesOrCommaSeparatedIds: string): IMode {
-		var modeIds = this._registry.extractModeIds(commaSeparatedMimetypesOrCommaSeparatedIds);
-
-		var isPlainText = false;
-		for (var i = 0; i < modeIds.length; i++) {
+		let isPlainText = false;
+		for (let i = 0; i < modeIds.length; i++) {
 			if (this._instantiatedModes.hasOwnProperty(modeIds[i])) {
 				return this._instantiatedModes[modeIds[i]];
 			}
@@ -122,33 +106,33 @@ export class ModeServiceImpl implements IModeService {
 
 		if (isPlainText) {
 			// Try to do it synchronously
-			var r: IMode = null;
+			let r: IMode | null = null;
 			this.getOrCreateMode(commaSeparatedMimetypesOrCommaSeparatedIds).then((mode) => {
 				r = mode;
-			}).done(null, onUnexpectedError);
+			}, onUnexpectedError);
 			return r;
 		}
 		return null;
 	}
 
-	public getOrCreateMode(commaSeparatedMimetypesOrCommaSeparatedIds: string): TPromise<IMode> {
+	public getOrCreateMode(commaSeparatedMimetypesOrCommaSeparatedIds: string): Promise<IMode> {
 		return this._onReady().then(() => {
-			var modeId = this.getModeId(commaSeparatedMimetypesOrCommaSeparatedIds);
+			const modeId = this.getModeId(commaSeparatedMimetypesOrCommaSeparatedIds);
 			// Fall back to plain text if no mode was found
 			return this._getOrCreateMode(modeId || 'plaintext');
 		});
 	}
 
-	public getOrCreateModeByLanguageName(languageName: string): TPromise<IMode> {
+	public getOrCreateModeByLanguageName(languageName: string): Promise<IMode> {
 		return this._onReady().then(() => {
-			var modeId = this._getModeIdByLanguageName(languageName);
+			const modeId = this._getModeIdByLanguageName(languageName);
 			// Fall back to plain text if no mode was found
 			return this._getOrCreateMode(modeId || 'plaintext');
 		});
 	}
 
-	private _getModeIdByLanguageName(languageName: string): string {
-		var modeIds = this._registry.getModeIdsFromLanguageName(languageName);
+	private _getModeIdByLanguageName(languageName: string): string | null {
+		const modeIds = this._registry.getModeIdsFromLanguageName(languageName);
 
 		if (modeIds.length > 0) {
 			return modeIds[0];
@@ -157,9 +141,9 @@ export class ModeServiceImpl implements IModeService {
 		return null;
 	}
 
-	public getOrCreateModeByFilenameOrFirstLine(filename: string, firstLine?: string): TPromise<IMode> {
+	public getOrCreateModeByFilepathOrFirstLine(filepath: string, firstLine?: string): Promise<IMode> {
 		return this._onReady().then(() => {
-			var modeId = this.getModeIdByFilenameOrFirstLine(filename, firstLine);
+			const modeId = this.getModeIdByFilepathOrFirstLine(filepath, firstLine);
 			// Fall back to plain text if no mode was found
 			return this._getOrCreateMode(modeId || 'plaintext');
 		});
@@ -167,7 +151,7 @@ export class ModeServiceImpl implements IModeService {
 
 	private _getOrCreateMode(modeId: string): IMode {
 		if (!this._instantiatedModes.hasOwnProperty(modeId)) {
-			let languageIdentifier = this.getLanguageIdentifier(modeId);
+			let languageIdentifier = this.getLanguageIdentifier(modeId) || NULL_LANGUAGE_IDENTIFIER;
 			this._instantiatedModes[modeId] = new FrankensteinMode(languageIdentifier);
 
 			this._onDidCreateMode.fire(this._instantiatedModes[modeId]);

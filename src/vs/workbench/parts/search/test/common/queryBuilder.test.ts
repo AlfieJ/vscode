@@ -2,20 +2,23 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
-
 import * as assert from 'assert';
 import { IExpression } from 'vs/base/common/glob';
 import * as paths from 'vs/base/common/paths';
-import uri from 'vs/base/common/uri';
-import { TestInstantiationService } from 'vs/platform/instantiation/test/common/instantiationServiceMock';
+import { URI as uri } from 'vs/base/common/uri';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
-import { IWorkspaceContextService, Workspace } from 'vs/platform/workspace/common/workspace';
 import { TestConfigurationService } from 'vs/platform/configuration/test/common/testConfigurationService';
-import { QueryBuilder, ISearchPathsResult } from 'vs/workbench/parts/search/common/queryBuilder';
-import { TestContextService } from 'vs/workbench/test/workbenchTestServices';
+import { IEnvironmentService } from 'vs/platform/environment/common/environment';
+import { TestInstantiationService } from 'vs/platform/instantiation/test/common/instantiationServiceMock';
+import { IFolderQuery, IPatternInfo, QueryType, ITextQuery, IFileQuery } from 'vs/platform/search/common/search';
+import { IWorkspaceContextService, toWorkspaceFolders, Workspace } from 'vs/platform/workspace/common/workspace';
+import { ISearchPathsResult, QueryBuilder } from 'vs/workbench/parts/search/common/queryBuilder';
+import { TestContextService, TestEnvironmentService } from 'vs/workbench/test/workbenchTestServices';
 
-import { ISearchQuery, QueryType, IPatternInfo, IFolderQuery } from 'vs/platform/search/common/search';
+const DEFAULT_EDITOR_CONFIG = {};
+const DEFAULT_USER_CONFIG = { useRipgrep: true, useIgnoreFiles: true, useGlobalIgnoreFiles: true };
+const DEFAULT_QUERY_PROPS = { useRipgrep: true };
+const DEFAULT_TEXT_QUERY_PROPS = { usePCRE2: false };
 
 suite('QueryBuilder', () => {
 	const PATTERN_INFO: IPatternInfo = { pattern: 'a' };
@@ -32,119 +35,133 @@ suite('QueryBuilder', () => {
 		instantiationService = new TestInstantiationService();
 
 		mockConfigService = new TestConfigurationService();
-		mockConfigService.setUserConfiguration('search', { useRipgrep: true });
+		mockConfigService.setUserConfiguration('search', DEFAULT_USER_CONFIG);
+		mockConfigService.setUserConfiguration('editor', DEFAULT_EDITOR_CONFIG);
 		instantiationService.stub(IConfigurationService, mockConfigService);
 
 		mockContextService = new TestContextService();
-		mockWorkspace = new Workspace('workspace', 'workspace', [ROOT_1_URI]);
+		mockWorkspace = new Workspace('workspace', toWorkspaceFolders([{ path: ROOT_1_URI.fsPath }]));
 		mockContextService.setWorkspace(mockWorkspace);
+
 		instantiationService.stub(IWorkspaceContextService, mockContextService);
+		instantiationService.stub(IEnvironmentService, TestEnvironmentService);
 
 		queryBuilder = instantiationService.createInstance(QueryBuilder);
 	});
 
 	test('simple text pattern', () => {
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(PATTERN_INFO),
-			<ISearchQuery>{
+			<ITextQuery>{
+				folderQueries: [],
 				contentPattern: PATTERN_INFO,
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			});
 	});
 
 	test('folderResources', () => {
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI]
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{ folder: ROOT_1_URI }],
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			});
 	});
 
 	test('simple exclude setting', () => {
 		mockConfigService.setUserConfiguration('search', {
-			useRipgrep: true,
+			...DEFAULT_USER_CONFIG,
 			exclude: {
-				'bar/**': true
+				'bar/**': true,
+				'foo/**': {
+					'when': '$(basename).ts'
+				}
 			}
 		});
 
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI]
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: ROOT_1_URI,
-					excludePattern: { 'bar/**': true }
+					excludePattern: {
+						'bar/**': true,
+						'foo/**': {
+							'when': '$(basename).ts'
+						}
+					}
 				}],
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			});
 	});
 
 	test('simple include', () => {
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
 				{ includePattern: './bar' }
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: getUri(fixPath(paths.join(ROOT_1, 'bar')))
 				}],
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			});
 
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
 				{ includePattern: '.\\bar' }
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: getUri(fixPath(paths.join(ROOT_1, 'bar')))
 				}],
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			});
 	});
 
 	test('exclude setting and searchPath', () => {
 		mockConfigService.setUserConfiguration('search', {
-			useRipgrep: true,
+			...DEFAULT_USER_CONFIG,
 			exclude: {
-				'foo/**/*.js': true
+				'foo/**/*.js': true,
+				'bar/**': {
+					'when': '$(basename).ts'
+				}
 			}
 		});
 
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
 				{ includePattern: './foo' }
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: getUri(paths.join(ROOT_1, 'foo'))
 				}],
-				excludePattern: { [paths.join(ROOT_1, 'foo/**/*.js')]: true },
-				type: QueryType.Text,
-				useRipgrep: true
+				excludePattern: {
+					[paths.join(ROOT_1, 'foo/**/*.js')]: true,
+					[paths.join(ROOT_1, 'bar/**')]: {
+						'when': '$(basename).ts'
+					}
+				},
+				type: QueryType.Text
 			});
 	});
 
@@ -153,142 +170,149 @@ suite('QueryBuilder', () => {
 		const ROOT_2_URI = getUri(ROOT_2);
 		const ROOT_3 = fixPath('/project/root3');
 		const ROOT_3_URI = getUri(ROOT_3);
-		mockWorkspace.roots = [ROOT_1_URI, ROOT_2_URI, ROOT_3_URI];
+		mockWorkspace.folders = toWorkspaceFolders([{ path: ROOT_1_URI.fsPath }, { path: ROOT_2_URI.fsPath }, { path: ROOT_3_URI.fsPath }]);
 		mockWorkspace.configuration = uri.file(fixPath('/config'));
 
 		mockConfigService.setUserConfiguration('search', {
-			useRipgrep: true,
+			...DEFAULT_USER_CONFIG,
 			exclude: { 'foo/**/*.js': true }
 		}, ROOT_1_URI);
 
 		mockConfigService.setUserConfiguration('search', {
-			useRipgrep: true,
+			...DEFAULT_USER_CONFIG,
 			exclude: { 'bar': true }
 		}, ROOT_2_URI);
 
 		// There are 3 roots, the first two have search.exclude settings, test that the correct basic query is returned
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI, ROOT_2_URI, ROOT_3_URI]
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [
 					{ folder: ROOT_1_URI, excludePattern: patternsToIExpression('foo/**/*.js') },
 					{ folder: ROOT_2_URI, excludePattern: patternsToIExpression('bar') },
 					{ folder: ROOT_3_URI }
 				],
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			}
 		);
 
 		// Now test that it merges the root excludes when an 'include' is used
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI, ROOT_2_URI, ROOT_3_URI],
 				{ includePattern: './root2/src' }
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [
 					{ folder: getUri(paths.join(ROOT_2, 'src')) }
 				],
 				excludePattern: patternsToIExpression(paths.join(ROOT_1, 'foo/**/*.js'), paths.join(ROOT_2, 'bar')),
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			}
 		);
 	});
 
 	test('simple exclude input pattern', () => {
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
 				{ excludePattern: 'foo' }
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: ROOT_1_URI
 				}],
 				type: QueryType.Text,
-				excludePattern: patternsToIExpression(globalGlob('foo')),
-				useRipgrep: true
+				excludePattern: patternsToIExpression(...globalGlob('foo'))
+			});
+	});
+
+	test('file pattern trimming', () => {
+		const content = 'content';
+		assertEqualQueries(
+			queryBuilder.file(
+				undefined,
+				{ filePattern: ` ${content} ` }
+			),
+			<IFileQuery>{
+				folderQueries: [],
+				filePattern: content,
+				type: QueryType.File
 			});
 	});
 
 	test('exclude ./ syntax', () => {
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
 				{ excludePattern: './bar' }
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: ROOT_1_URI
 				}],
 				excludePattern: patternsToIExpression(fixPath(paths.join(ROOT_1, 'bar'))),
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			});
 
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
 				{ excludePattern: './bar/**/*.ts' }
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: ROOT_1_URI
 				}],
 				excludePattern: patternsToIExpression(fixPath(paths.join(ROOT_1, 'bar/**/*.ts'))),
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			});
 
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
 				{ excludePattern: '.\\bar\\**\\*.ts' }
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: ROOT_1_URI
 				}],
 				excludePattern: patternsToIExpression(fixPath(paths.join(ROOT_1, 'bar/**/*.ts'))),
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			});
 	});
 
 	test('extraFileResources', () => {
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
 				{ extraFileResources: [getUri('/foo/bar.js')] }
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: ROOT_1_URI
 				}],
 				extraFileResources: [getUri('/foo/bar.js')],
-				type: QueryType.Text,
-				useRipgrep: true
+				type: QueryType.Text
 			});
 
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
@@ -297,17 +321,16 @@ suite('QueryBuilder', () => {
 					excludePattern: '*.js'
 				}
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: ROOT_1_URI
 				}],
-				excludePattern: patternsToIExpression(globalGlob('*.js')),
-				type: QueryType.Text,
-				useRipgrep: true
+				excludePattern: patternsToIExpression(...globalGlob('*.js')),
+				type: QueryType.Text
 			});
 
-		assertEqualQueries(
+		assertEqualTextQueries(
 			queryBuilder.text(
 				PATTERN_INFO,
 				[ROOT_1_URI],
@@ -316,14 +339,13 @@ suite('QueryBuilder', () => {
 					includePattern: '*.txt'
 				}
 			),
-			<ISearchQuery>{
+			<ITextQuery>{
 				contentPattern: PATTERN_INFO,
 				folderQueries: [{
 					folder: ROOT_1_URI
 				}],
-				includePattern: patternsToIExpression(globalGlob('*.txt')),
-				type: QueryType.Text,
-				useRipgrep: true
+				includePattern: patternsToIExpression(...globalGlob('*.txt')),
+				type: QueryType.Text
 			});
 	});
 
@@ -333,37 +355,19 @@ suite('QueryBuilder', () => {
 				assert.deepEqual(
 					queryBuilder.parseSearchPaths(includePattern),
 					<ISearchPathsResult>{
-						pattern: patternsToIExpression(...expectedPatterns.map(globalGlob))
+						pattern: patternsToIExpression(...expectedPatterns)
 					},
 					includePattern);
 			}
 
 			[
-				['a', ['a']],
-				['a/b', ['a/b']],
-				['a/b,  c', ['a/b', 'c']],
-				['a,.txt', ['a', '*.txt']],
-				['a,,,b', ['a', 'b']],
-				['**/a,b/**', ['**/a', 'b/**']]
+				['a', ['**/a/**', '**/a']],
+				['a/b', ['**/a/b', '**/a/b/**']],
+				['a/b,  c', ['**/a/b', '**/c', '**/a/b/**', '**/c/**']],
+				['a,.txt', ['**/a', '**/a/**', '**/*.txt', '**/*.txt/**']],
+				['a,,,b', ['**/a', '**/a/**', '**/b', '**/b/**']],
+				['**/a,b/**', ['**/a', '**/a/**', '**/b/**']]
 			].forEach(([includePattern, expectedPatterns]) => testSimpleIncludes(<string>includePattern, <string[]>expectedPatterns));
-		});
-
-		test('double-star patterns are normalized', () => {
-			function testLiteralIncludes(includePattern: string, expectedPattern: string): void {
-				assert.deepEqual(
-					queryBuilder.parseSearchPaths(includePattern),
-					<ISearchPathsResult>{
-						pattern: patternsToIExpression(expectedPattern)
-					},
-					includePattern);
-			}
-
-			[
-				['**/*.*', '{**/*.*/**,**/*.*}'],
-				['foo/**', '{**/foo/**,**/foo/**}'],
-				['**/**/foo', '{**/foo/**,**/foo}'],
-				['**/**', '{**,**}']
-			].forEach(([includePattern, expectedPattern]) => testLiteralIncludes(includePattern, expectedPattern));
 		});
 
 		function testIncludes(includePattern: string, expectedResult: ISearchPathsResult): void {
@@ -373,12 +377,12 @@ suite('QueryBuilder', () => {
 				includePattern);
 		}
 
-		function testIncludesDataItem([includePattern, expectedResult]): void {
-			testIncludes(<string>includePattern, <ISearchPathsResult>expectedResult);
+		function testIncludesDataItem([includePattern, expectedResult]: [string, ISearchPathsResult]): void {
+			testIncludes(includePattern, expectedResult);
 		}
 
 		test('absolute includes', () => {
-			[
+			const cases: [string, ISearchPathsResult][] = [
 				[
 					fixPath('/foo/bar'),
 					<ISearchPathsResult>{
@@ -389,7 +393,7 @@ suite('QueryBuilder', () => {
 					fixPath('/foo/bar') + ',' + 'a',
 					<ISearchPathsResult>{
 						searchPaths: [{ searchPath: getUri('/foo/bar') }],
-						pattern: patternsToIExpression(globalGlob('a'))
+						pattern: patternsToIExpression(...globalGlob('a'))
 					}
 				],
 				[
@@ -442,11 +446,38 @@ suite('QueryBuilder', () => {
 						}]
 					}
 				]
-			].forEach(testIncludesDataItem);
+			];
+			cases.forEach(testIncludesDataItem);
+		});
+
+		test('includes with tilde', () => {
+			const userHome = TestEnvironmentService.userHome;
+			const cases: [string, ISearchPathsResult][] = [
+				[
+					'~/foo/bar',
+					<ISearchPathsResult>{
+						searchPaths: [{ searchPath: getUri(userHome, '/foo/bar') }]
+					}
+				],
+				[
+					'~/foo/bar, a',
+					<ISearchPathsResult>{
+						searchPaths: [{ searchPath: getUri(userHome, '/foo/bar') }],
+						pattern: patternsToIExpression(...globalGlob('a'))
+					}
+				],
+				[
+					fixPath('/foo/~/bar'),
+					<ISearchPathsResult>{
+						searchPaths: [{ searchPath: getUri('/foo/~/bar') }]
+					}
+				],
+			];
+			cases.forEach(testIncludesDataItem);
 		});
 
 		test('relative includes w/single root folder', () => {
-			[
+			const cases: [string, ISearchPathsResult][] = [
 				[
 					'./a',
 					<ISearchPathsResult>{
@@ -485,15 +516,24 @@ suite('QueryBuilder', () => {
 						}]
 					}
 				],
-			].forEach(testIncludesDataItem);
+				[
+					'../',
+					<ISearchPathsResult>{
+						searchPaths: [{
+							searchPath: getUri('foo/')
+						}]
+					}
+				]
+			];
+			cases.forEach(testIncludesDataItem);
 		});
 
 		test('relative includes w/two root folders', () => {
 			const ROOT_2 = '/project/root2';
-			mockWorkspace.roots = [ROOT_1_URI, getUri(ROOT_2)];
+			mockWorkspace.folders = toWorkspaceFolders([{ path: ROOT_1_URI.fsPath }, { path: getUri(ROOT_2).fsPath }]);
 			mockWorkspace.configuration = uri.file(fixPath('config'));
 
-			[
+			const cases: [string, ISearchPathsResult][] = [
 				[
 					'./root1',
 					<ISearchPathsResult>{
@@ -524,16 +564,44 @@ suite('QueryBuilder', () => {
 							}]
 					}
 				]
-			].forEach(testIncludesDataItem);
+			];
+			cases.forEach(testIncludesDataItem);
+		});
+
+		test('include ./foldername', () => {
+			const ROOT_2 = '/project/root2';
+			const ROOT_1_FOLDERNAME = 'foldername';
+			mockWorkspace.folders = toWorkspaceFolders([{ path: ROOT_1_URI.fsPath, name: ROOT_1_FOLDERNAME }, { path: getUri(ROOT_2).fsPath }]);
+			mockWorkspace.configuration = uri.file(fixPath('config'));
+
+			const cases: [string, ISearchPathsResult][] = [
+				[
+					'./foldername',
+					<ISearchPathsResult>{
+						searchPaths: [{
+							searchPath: getUri(ROOT_1)
+						}]
+					}
+				],
+				[
+					'./foldername/foo',
+					<ISearchPathsResult>{
+						searchPaths: [{
+							searchPath: getUri(paths.join(ROOT_1, 'foo'))
+						}]
+					}
+				]
+			];
+			cases.forEach(testIncludesDataItem);
 		});
 
 		test('relative includes w/multiple ambiguous root folders', () => {
 			const ROOT_2 = '/project/rootB';
 			const ROOT_3 = '/otherproject/rootB';
-			mockWorkspace.roots = [ROOT_1_URI, getUri(ROOT_2), getUri(ROOT_3)];
+			mockWorkspace.folders = toWorkspaceFolders([{ path: ROOT_1_URI.fsPath }, { path: getUri(ROOT_2).fsPath }, { path: getUri(ROOT_3).fsPath }]);
 			mockWorkspace.configuration = uri.file(fixPath('/config'));
 
-			[
+			const cases: [string, ISearchPathsResult][] = [
 				[
 					'',
 					<ISearchPathsResult>{
@@ -596,12 +664,122 @@ suite('QueryBuilder', () => {
 							}]
 					}
 				]
-			].forEach(testIncludesDataItem);
+			];
+			cases.forEach(testIncludesDataItem);
+		});
+	});
+
+	suite('smartCase', () => {
+		test('no flags -> no change', () => {
+			const query = queryBuilder.text(
+				{
+					pattern: 'a'
+				},
+				[]);
+
+			assert(!query.contentPattern.isCaseSensitive);
+		});
+
+		test('maintains isCaseSensitive when smartCase not set', () => {
+			const query = queryBuilder.text(
+				{
+					pattern: 'a',
+					isCaseSensitive: true
+				},
+				[]);
+
+			assert(query.contentPattern.isCaseSensitive);
+		});
+
+		test('maintains isCaseSensitive when smartCase set', () => {
+			const query = queryBuilder.text(
+				{
+					pattern: 'a',
+					isCaseSensitive: true,
+					isSmartCase: true
+				},
+				[]);
+
+			assert(query.contentPattern.isCaseSensitive);
+		});
+
+		test('smartCase determines not case sensitive', () => {
+			const query = queryBuilder.text(
+				{
+					pattern: 'abcd',
+					isSmartCase: true
+				},
+				[]);
+
+			assert(!query.contentPattern.isCaseSensitive);
+		});
+
+		test('smartCase determines case sensitive', () => {
+			const query = queryBuilder.text(
+				{
+					pattern: 'abCd',
+					isSmartCase: true
+				},
+				[]);
+
+			assert(query.contentPattern.isCaseSensitive);
+		});
+
+		test('smartCase determines not case sensitive (regex)', () => {
+			const query = queryBuilder.text(
+				{
+					pattern: 'ab\\Sd',
+					isRegExp: true,
+					isSmartCase: true
+				},
+				[]);
+
+			assert(!query.contentPattern.isCaseSensitive);
+		});
+
+		test('smartCase determines case sensitive (regex)', () => {
+			const query = queryBuilder.text(
+				{
+					pattern: 'ab[A-Z]d',
+					isRegExp: true,
+					isSmartCase: true
+				},
+				[]);
+
+			assert(query.contentPattern.isCaseSensitive);
+		});
+	});
+
+	suite('file', () => {
+		test('simple file query', () => {
+			const cacheKey = 'asdf';
+			const query = queryBuilder.file([ROOT_1_URI], {
+				cacheKey,
+				sortByScore: true
+			});
+
+			assert.equal(query.folderQueries.length, 1);
+			assert.equal(query.cacheKey, cacheKey);
+			assert(query.sortByScore);
 		});
 	});
 });
 
-function assertEqualQueries(actual: ISearchQuery, expected: ISearchQuery): void {
+function assertEqualTextQueries(actual: ITextQuery, expected: ITextQuery): void {
+	expected = {
+		...DEFAULT_TEXT_QUERY_PROPS,
+		...expected
+	};
+
+	return assertEqualQueries(actual, expected);
+}
+
+function assertEqualQueries(actual: ITextQuery | IFileQuery, expected: ITextQuery | IFileQuery): void {
+	expected = {
+		...DEFAULT_QUERY_PROPS,
+		...expected
+	};
+
 	const folderQueryToCompareObject = (fq: IFolderQuery) => {
 		return {
 			path: fq.folder.fsPath,
@@ -662,9 +840,11 @@ function cleanUndefinedQueryValues(q: any): void {
 	return q;
 }
 
-function globalGlob(str: string): string {
-	const globalGlob = `{**/${str}/**,**/${str}}`;
-	return globalGlob.replace(/\*\*([/\\]\*\*)+/g, '**');
+function globalGlob(pattern: string): string[] {
+	return [
+		`**/${pattern}/**`,
+		`**/${pattern}`
+	];
 }
 
 function patternsToIExpression(...patterns: string[]): IExpression {
@@ -673,14 +853,16 @@ function patternsToIExpression(...patterns: string[]): IExpression {
 		undefined;
 }
 
-function getUri(slashPath: string): uri {
-	return uri.file(fixPath(slashPath));
+function getUri(...slashPathParts: string[]): uri {
+	return uri.file(fixPath(...slashPathParts));
 }
 
-function fixPath(slashPath: string): string {
-	return process.platform === 'win32' ?
-		(slashPath.match(/^c:/) ? slashPath : paths.join('c:', ...slashPath.split('/'))) :
-		slashPath;
+function fixPath(...slashPathParts: string[]): string {
+	if (process.platform === 'win32' && slashPathParts.length && !slashPathParts[0].match(/^c:/i)) {
+		slashPathParts.unshift('c:');
+	}
+
+	return paths.join(...slashPathParts);
 }
 
 function normalizeExpression(expression: IExpression): IExpression {
@@ -690,7 +872,7 @@ function normalizeExpression(expression: IExpression): IExpression {
 
 	const normalized = Object.create(null);
 	Object.keys(expression).forEach(key => {
-		normalized[key.replace(/\\/g, '/')] = true;
+		normalized[key.replace(/\\/g, '/')] = expression[key];
 	});
 
 	return normalized;
